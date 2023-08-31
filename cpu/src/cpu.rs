@@ -19,20 +19,6 @@ pub struct Cpu6502 {
     register_status: u8,  // Processor status (P)
     memory: [u8; 0xFFFF],
 }
-/*
-7  bit  0
----- ----
-NVss DIZC
-|||| ||||
-|||| |||+- Carry
-|||| ||+-- Zero
-|||| |+--- Interrupt Disable
-|||| +---- Decimal
-||++------ No CPU effect, see: the B flag
-|+-------- Overflow
-+--------- Negative
-*/
-
 
 impl Cpu6502 {
     pub fn new() -> Self {
@@ -87,6 +73,32 @@ impl Cpu6502 {
         self.run()
     }
 
+    #[inline]
+    fn get_operand(&self, mode: &AddressingMode) -> u8 {
+        match mode {
+            AddressingMode::Accumulator => {
+                self.register_acc
+            }
+            _ => {
+                let addr = self.get_operand_address(mode);
+                self.mem_read(addr)
+            }
+        }
+    }
+
+    #[inline]
+    fn store_operand(&mut self, mode: &AddressingMode, value: u8) {
+        match mode {
+            AddressingMode::Accumulator => {
+                self.register_acc = value;
+            }
+            _ => {
+                let addr = self.get_operand_address(mode);
+                self.mem_write(addr, value);
+            }
+        }
+    }
+
     fn get_operand_address(&self, mode: &AddressingMode) -> u16 {
         let operand_pc = self.program_counter + 1;
         match mode {
@@ -94,7 +106,7 @@ impl Cpu6502 {
 
             AddressingMode::ZeroPage => self.mem_read(operand_pc) as u16,
 
-            AddressingMode::Absolute => self.mem_read_u16(operand_pc),
+            AddressingMode::Absolute | AddressingMode::Indirect => self.mem_read_u16(operand_pc),
 
             AddressingMode::ZeroPage_X => {
                 let pos = self.mem_read(operand_pc);
@@ -136,7 +148,7 @@ impl Cpu6502 {
                 deref
             }
 
-            AddressingMode::NoneAddressing => {
+            AddressingMode::NoneAddressing | AddressingMode::Accumulator => {
                 panic!("mode {:?} is not supported", mode);
             }
         }
@@ -146,7 +158,7 @@ impl Cpu6502 {
         loop {
             let opscode = self.mem_read(self.program_counter) as usize;
             let op = CPU_OPS_CODES[opscode];
-            
+
             if op.opcode != opscode as u8 {
                 panic!("Opcode ${:02x} is not implemented", opscode)
             }
@@ -154,28 +166,129 @@ impl Cpu6502 {
             let am = &op.address_mode;
 
             // pick a function
-            // TODO there should be a better way of doing 
+            // TODO there should be a better way of doing
             match opscode {
-                // LDA
-                0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
-                    self.lda(am);
-                }
-                
-                // STA
-                0x85 | 0x95  => {
-                    self.sta(am);
+                // ADC
+                0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
+                    self.adc(am);
                 }
 
-                // TAX
-                0xAA => self.tax(),
+                // AND
+                0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => {
+                    self.and(am);
+                }
 
-                // INX
-                0xE8 => self.inx(),
+                // ASL
+                0x0A | 0x06 | 0x16 | 0x0E | 0x1E => {
+                    self.asl(am);
+                }
+
+                // BCC
+                0x90 => {
+                    //self.bcc(am);
+                }
+
+                // BCS
+                // BEQ
+                // BMI
+                // BNE
+                // BPL
+                // BVC
+                // BVS
+
+                // BIT
 
                 // BRK
                 0x00 => {
                     return;
                 }
+
+                // CLC
+                // CLD
+                // CLI
+                // CLV
+
+                // CMP
+
+                // CPX
+
+                // CPY
+
+                // DEC
+
+                // DEX
+
+                // DEY
+
+                // EOR
+
+                // INC
+
+                // INX
+                0xE8 => self.inx(),
+
+                // INY
+
+                // JMP
+
+                // JSR
+
+                // LDA
+                0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
+                    self.lda(am);
+                }
+
+                // LDX
+
+                // LDY
+
+                // LSR
+
+                // NOP
+
+                // ORA
+
+                // PHA
+
+                // PHP
+
+                // PLA
+
+                // PLP
+
+                // ROL
+
+                // ROR
+
+                // RTI
+
+                // RTS
+
+                // SBC
+
+                // SEC
+                // SED
+                // SEI
+
+                // STA
+                0x85 | 0x95 => {
+                    self.sta(am);
+                }
+
+                // STX
+
+                // STY
+
+                // TAX
+                0xAA => self.tax(),
+
+                // TAY
+                // TSX
+                // TXA
+                // TXS
+                // TYA
+
+                // should not happen
                 _ => todo!(),
             }
 
@@ -210,9 +323,46 @@ impl Cpu6502 {
         self.mem_write(addr, self.register_acc);
     }
 
+    fn adc(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+        let carry;
+
+        (self.register_acc, carry) = self.register_acc.overflowing_add(value);
+        if self.is_carry_set() {
+            self.register_acc += 1;
+        }
+
+        self.update_carry(carry);
+        self.update_zero_and_negative_flags(self.register_acc);
+    }
+
+    fn and(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+
+        self.register_acc = self.register_acc & value;
+        self.update_zero_and_negative_flags(self.register_acc);
+    }
+
+    fn asl(&mut self, mode: &AddressingMode) {
+        let mut value = self.get_operand(mode);
+        self.update_carry(value & 0b1000_0000 == 0b1000_0000);
+        value = value << 1;
+        self.store_operand(mode, value);
+        self.update_zero_and_negative_flags(value);
+    }
+
     /*
         Misc
     */
+    fn update_carry(&mut self, carry: bool) {
+        if carry {
+            self.register_status |= 0b0000_0001;
+        } else {
+            self.register_status &= 0b1111_1110;
+        }
+    }
 
     fn update_zero_and_negative_flags(&mut self, result: u8) {
         if result == 0 {
@@ -227,6 +377,28 @@ impl Cpu6502 {
             self.register_status &= 0b0111_1111;
         }
     }
+
+    fn is_carry_set(&self) -> bool {
+        self.register_status & 0b1 == 0b1
+    }
+
+    fn is_zero_set(&self) -> bool {
+        self.register_status & 0b10 == 0b10
+    }
+
+    /*
+    7  bit  0
+    ---- ----
+    NVss DIZC
+    |||| ||||
+    |||| |||+- Carry
+    |||| ||+-- Zero
+    |||| |+--- Interrupt Disable
+    |||| +---- Decimal
+    ||++------ No CPU effect, see: the B flag
+    |+-------- Overflow
+    +--------- Negative
+    */
 }
 
 #[cfg(test)]
@@ -287,5 +459,58 @@ mod test {
         cpu.load_and_run(vec![0xa5, 0x10, 0x00]);
 
         assert_eq!(cpu.register_acc, 0x55);
+    }
+
+    #[test]
+    fn test_adc_immediate_carry() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0x01, 0x69, 0xff, 0x00]);
+        assert_eq!(cpu.register_acc, 0x00);
+        assert!(cpu.is_carry_set());
+    }
+
+    #[test]
+    fn test_adc_immediate_no_carry() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0x01, 0x69, 0xfe, 0x00]);
+        assert_eq!(cpu.register_acc, 0xff);
+        assert!(!cpu.is_carry_set());
+    }
+
+    #[test]
+    fn test_adc_immediate_plus_carry() {
+        let mut cpu = Cpu6502::new();
+        cpu.load(vec![0xa9, 0x01, 0x69, 0xfd, 0x00]);
+        cpu.reset();
+        cpu.update_carry(true);
+        cpu.run();
+        assert_eq!(cpu.register_acc, 0xff);
+        assert!(!cpu.is_carry_set());
+    }
+
+    #[test]
+    fn test_and_immediate() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0b00011111, 0x29, 0b11111000, 0x00]);
+        assert_eq!(cpu.register_acc, 0b00011000);
+        assert!(!cpu.is_zero_set());
+    }
+
+    #[test]
+    fn test_asl_acc_no_carry() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0b00011111, 0x0A, 0x00]);
+        assert_eq!(cpu.register_acc, 0b00111110);
+        assert!(!cpu.is_carry_set());
+        assert!(!cpu.is_zero_set());
+    }
+
+    #[test]
+    fn test_asl_acc_carry() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0b10011111, 0x0A, 0x00]);
+        assert_eq!(cpu.register_acc, 0b00111110);
+        assert!(cpu.is_carry_set());
+        assert!(!cpu.is_zero_set());
     }
 }
