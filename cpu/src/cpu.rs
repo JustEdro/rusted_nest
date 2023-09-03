@@ -76,9 +76,7 @@ impl Cpu6502 {
     #[inline]
     fn get_operand(&self, mode: &AddressingMode) -> u8 {
         match mode {
-            AddressingMode::Accumulator => {
-                self.register_acc
-            }
+            AddressingMode::Accumulator => self.register_acc,
             _ => {
                 let addr = self.get_operand_address(mode);
                 self.mem_read(addr)
@@ -165,8 +163,11 @@ impl Cpu6502 {
 
             let am = &op.address_mode;
 
+            // store PC to check for a jump
+            let pc = self.program_counter;
+
             // pick a function
-            // TODO there should be a better way of doing
+            // TODO there should be a better way of doing that
             match opscode {
                 // ADC
                 0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
@@ -185,18 +186,49 @@ impl Cpu6502 {
 
                 // BCC
                 0x90 => {
-                    //self.bcc(am);
+                    self.bcc(am);
                 }
 
                 // BCS
+                0xB0 => {
+                    self.bcs(am);
+                }
+
                 // BEQ
+                0xF0 => {
+                    self.beq(am);
+                }
+
                 // BMI
+                0x30 => {
+                    self.bmi(am);
+                }
+
                 // BNE
+                0xD0 => {
+                    self.bne(am);
+                }
+
                 // BPL
+                0x10 => {
+                    self.bpl(am);
+                }
+
                 // BVC
+                0x50 => {
+                    self.bvc(am);
+                }
+
                 // BVS
+                0x70 => {
+                    self.bvs(am);
+                }
 
                 // BIT
+                0x24 | 0x2C => {
+                    self.bit(am);
+                }
+
 
                 // BRK
                 0x00 => {
@@ -292,7 +324,10 @@ impl Cpu6502 {
                 _ => todo!(),
             }
 
-            self.program_counter += op.length;
+            // if the PC was not touched
+            if self.program_counter == pc {
+                self.program_counter += op.length;
+            }
         }
     }
 
@@ -353,6 +388,70 @@ impl Cpu6502 {
         self.update_zero_and_negative_flags(value);
     }
 
+    fn bcc(&mut self, mode: &AddressingMode) {
+        let value = self.get_operand(mode);
+        if !self.is_carry_set() {
+            self.program_counter += value as u16;
+        }
+    }
+
+    fn bcs(&mut self, mode: &AddressingMode) {
+        let value = self.get_operand(mode);
+        if self.is_carry_set() {
+            self.program_counter += value as u16;
+        }
+    }
+
+    fn beq(&mut self, mode: &AddressingMode) {
+        let value = self.get_operand(mode);
+        if self.is_zero_set() {
+            self.program_counter += value as u16;
+        }
+    }
+
+    fn bmi(&mut self, mode: &AddressingMode) {
+        let value = self.get_operand(mode);
+        if self.is_negative_set() {
+            self.program_counter += value as u16;
+        }
+    }
+
+    fn bne(&mut self, mode: &AddressingMode) {
+        let value = self.get_operand(mode);
+        if !self.is_zero_set() {
+            self.program_counter += value as u16;
+        }
+    }
+
+    fn bpl(&mut self, mode: &AddressingMode) {
+        let value = self.get_operand(mode);
+        if !self.is_negative_set() {
+            self.program_counter += value as u16;
+        }
+    }
+
+    fn bvc(&mut self, mode: &AddressingMode) {
+        let value = self.get_operand(mode);
+        if !self.is_overflow_set() {
+            self.program_counter += value as u16;
+        }
+    }
+
+    fn bvs(&mut self, mode: &AddressingMode) {
+        let value = self.get_operand(mode);
+        if self.is_overflow_set() {
+            self.program_counter += value as u16;
+        }
+    }
+
+    fn bit(&mut self, mode: &AddressingMode) {
+        let value = self.get_operand(mode);
+        
+        self.register_status = self.register_status & 0b0011_1110 
+            | value & 0b1100_0000 // copy bit 6 and 7 to the status
+            | if value & self.register_acc == 0 {0b0000_0010} else {0}; // set zero if zero
+    }
+
     /*
         Misc
     */
@@ -384,6 +483,14 @@ impl Cpu6502 {
 
     fn is_zero_set(&self) -> bool {
         self.register_status & 0b10 == 0b10
+    }
+
+    fn is_negative_set(&self) -> bool {
+        self.register_status & 0b1000_0000 == 0b1000_0000
+    }
+
+    fn is_overflow_set(&self) -> bool {
+        self.register_status & 0b0100_0000 == 0b0100_0000
     }
 
     /*
@@ -513,4 +620,87 @@ mod test {
         assert!(cpu.is_carry_set());
         assert!(!cpu.is_zero_set());
     }
+
+    #[test]
+    fn test_bcc() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0b00011111, 0x0A, 0x90, 0x03, 0x00, 0xE8, 0x00]);
+        assert_eq!(cpu.register_x, 1)
+    }
+
+    #[test]
+    fn test_bcs() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0b10011111, 0x0A, 0xB0, 0x03, 0x00, 0xE8, 0x00]);
+        assert_eq!(cpu.register_x, 1)
+    }
+
+    #[test]
+    fn test_beq() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0, 0x0A, 0xF0, 0x03, 0x00, 0xE8, 0x00]);
+        assert_eq!(cpu.register_x, 1)
+    }
+
+    #[test]
+    fn test_bmi() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0b0100_0000, 0x0A, 0x30, 0x03, 0x00, 0xE8, 0x00]);
+        assert_eq!(cpu.register_x, 1)
+    }
+
+    #[test]
+    fn test_bne() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 1, 0x0A, 0xD0, 0x03, 0x00, 0xE8, 0x00]);
+        assert_eq!(cpu.register_x, 1)
+    }
+
+    #[test]
+    fn test_bpl() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0b0010_0000, 0x0A, 0x10, 0x03, 0x00, 0xE8, 0x00]);
+        assert_eq!(cpu.register_x, 1)
+    }
+
+    /* 
+    TODO implement when overflow is set somehow
+
+    #[test]
+    fn test_bvc() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0b0010_0000, 0x0A, 0x50, 0x03, 0x00, 0xE8, 0x00]);
+        assert_eq!(cpu.register_x, 1)
+    }
+
+    #[test]
+    fn test_bvs() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0b0010_0000, 0x0A, 0x70, 0x03, 0x00, 0xE8, 0x00]);
+        assert_eq!(cpu.register_x, 1)
+    }
+    */
+
+    #[test]
+    fn test_bit() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b10011111, 0x85, 0x01, 0xA9, 0b11000000, 0x24, 0x01, 0x00]);
+        
+        assert!(!cpu.is_zero_set());
+        assert!(cpu.is_negative_set());
+        assert!(!cpu.is_overflow_set());
+    }
+
+    #[test]
+    fn test_bit_zero() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b01011111, 0x85, 0x01, 0xA9, 0b00000000, 0x24, 0x01, 0x00]);
+        
+        assert!(cpu.is_zero_set());
+        assert!(!cpu.is_negative_set());
+        assert!(cpu.is_overflow_set());
+    }
+
+
+
 }
