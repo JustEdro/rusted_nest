@@ -236,9 +236,27 @@ impl Cpu6502 {
                 }
 
                 // CLC
+                0x18 => {
+                    self.clc();
+                }
+
                 // CLD
+                0xD8 => {
+                    // The state of the decimal flag is uncertain when the CPU is powered up and it is 
+                    // not reset when an interrupt is generated. In both cases you should include an 
+                    // explicit CLD to ensure that the flag is cleared before performing addition or subtraction.
+                    self.cld();
+                }
+
                 // CLI
+                0x58 => {
+                    self.cli();
+                }
+
                 // CLV
+                0xB8 => {
+                    self.clv();
+                }
 
                 // CMP
 
@@ -257,7 +275,9 @@ impl Cpu6502 {
                 // INC
 
                 // INX
-                0xE8 => self.inx(),
+                0xE8 => {
+                    self.inx();
+                }
 
                 // INY
 
@@ -452,14 +472,55 @@ impl Cpu6502 {
             | if value & self.register_acc == 0 {0b0000_0010} else {0}; // set zero if zero
     }
 
+    fn clc(&mut self) {
+        self.update_carry(false);
+    }
+
+    fn cld(&mut self) {
+        self.update_decimal(false);
+    }
+
+    fn cli(&mut self) {
+        self.update_interrupt_disable(false);
+    }
+
+    fn clv(&mut self) {
+        self.update_overflow(false);
+    }
+
+
     /*
         Misc
     */
-    fn update_carry(&mut self, carry: bool) {
-        if carry {
+    fn update_carry(&mut self, val: bool) {
+        if val {
             self.register_status |= 0b0000_0001;
         } else {
             self.register_status &= 0b1111_1110;
+        }
+    }
+
+    fn update_decimal(&mut self, val: bool) {
+        if val {
+            self.register_status |= 0b0000_1000;
+        } else {
+            self.register_status &= 0b1111_0111;
+        }
+    }
+
+    fn update_interrupt_disable(&mut self, val: bool) {
+        if val {
+            self.register_status |= 0b0000_0100;
+        } else {
+            self.register_status &= 0b1111_1011;
+        }
+    }
+
+    fn update_overflow(&mut self, val: bool) {
+        if val {
+            self.register_status |= 0b0100_0000;
+        } else {
+            self.register_status &= 0b1011_1111;
         }
     }
 
@@ -701,6 +762,39 @@ mod test {
         assert!(cpu.is_overflow_set());
     }
 
+    #[test]
+    fn test_clc() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0b10011111, 0x0A, 0x18, 0x00]);
+        assert!(!cpu.is_carry_set());
+    }
+
+    /* 
+    TODO implement when interrupt and decimal bits are set
+    #[test]
+    fn test_cld() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b11011111, 0x85, 0x01, 0xA9, 0b11000000, 0x24, 0x01, 0xB8, 0x00]);
+        
+        assert!(!cpu.is_overflow_set());
+    }
+
+    #[test]
+    fn test_cli() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b11011111, 0x85, 0x01, 0xA9, 0b11000000, 0x24, 0x01, 0xB8, 0x00]);
+        
+        assert!(!cpu.is_overflow_set());
+    }
+    */
+
+    #[test]
+    fn test_clv() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b11011111, 0x85, 0x01, 0xA9, 0b11000000, 0x24, 0x01, 0xB8, 0x00]);
+        
+        assert!(!cpu.is_overflow_set());
+    }
 
 
 }
