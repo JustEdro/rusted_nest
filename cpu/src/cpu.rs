@@ -259,18 +259,39 @@ impl Cpu6502 {
                 }
 
                 // CMP
+                0xC9 | 0xC5 | 0xD5 | 0xCD | 0xDD | 0xD9 | 0xC1 | 0xD1 => {
+                    self.cmp(am);
+                }
 
                 // CPX
+                0xE0 | 0xE4 | 0xEC => {
+                    self.cpx(am);
+                }
 
                 // CPY
+                0xC0 | 0xC4 | 0xCC => {
+                    self.cpy(am);
+                }
 
                 // DEC
+                0xC6 | 0xD6 | 0xCE | 0xDE => {
+                    self.dec(am);
+                }
 
                 // DEX
+                0xCA => {
+                    self.dex();
+                }
 
                 // DEY
+                0x88 => {
+                    self.dey();
+                }
 
                 // EOR
+                0x49 | 0x45 | 0x55 | 0x4D | 0x5D | 0x59 | 0x41 | 0x51  => {
+                    self.eor(am);
+                }
 
                 // INC
 
@@ -486,6 +507,52 @@ impl Cpu6502 {
 
     fn clv(&mut self) {
         self.update_overflow(false);
+    }
+
+    fn cmp(&mut self, mode: &AddressingMode) {
+        let mut value = self.get_operand(mode);
+        let overflow;
+        (value, overflow) = self.register_acc.overflowing_sub(value);
+        self.update_carry(!overflow);
+        self.update_zero_and_negative_flags(value);
+    }
+
+    fn cpx(&mut self, mode: &AddressingMode) {
+        let mut value = self.get_operand(mode);
+        let overflow;
+        (value, overflow) = self.register_x.overflowing_sub(value);
+        self.update_carry(!overflow);
+        self.update_zero_and_negative_flags(value);
+    }
+
+    fn cpy(&mut self, mode: &AddressingMode) {
+        let mut value = self.get_operand(mode);
+        let overflow;
+        (value, overflow) = self.register_y.overflowing_sub(value);
+        self.update_carry(!overflow);
+        self.update_zero_and_negative_flags(value);
+    }
+    
+    fn dec(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let (value, _) = self.mem_read(addr).overflowing_sub(1);
+        self.mem_write(addr, value);
+        self.update_zero_and_negative_flags(value);
+    }
+
+    fn dex(&mut self) {
+        (self.register_x, _) = self.register_x.overflowing_sub(1);
+        self.update_zero_and_negative_flags(self.register_x);
+    }
+
+    fn dey(&mut self) {
+        (self.register_y, _) = self.register_y.overflowing_sub(1);
+        self.update_zero_and_negative_flags(self.register_y);
+    }
+
+    fn eor(&mut self, mode: &AddressingMode) {
+        let mut value = self.get_operand(mode);
+        
     }
 
 
@@ -796,5 +863,111 @@ mod test {
         assert!(!cpu.is_overflow_set());
     }
 
+    #[test]
+    fn test_cmp_eq() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b10011111, 0xC9, 0b10011111, 0x00]);
+        assert!(cpu.is_carry_set());
+        assert!(cpu.is_zero_set());
+        assert!(!cpu.is_negative_set());
+    }
+
+    #[test]
+    fn test_cmp_ne() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b10011111, 0xC9, 0b00011111, 0x00]);
+        assert!(cpu.is_carry_set());
+        assert!(!cpu.is_zero_set());
+        assert!(cpu.is_negative_set());
+    }
+
+    #[test]
+    fn test_cmp_ne2() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b00011111, 0xC9, 0b10011111, 0x00]);
+        assert!(!cpu.is_carry_set());
+        assert!(!cpu.is_zero_set());
+        assert!(cpu.is_negative_set());
+    }
+
+    #[test]
+    fn test_cpx_eq() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b10011111, 0xAA, 0xE0, 0b10011111, 0x00]);
+        assert!(cpu.is_carry_set());
+        assert!(cpu.is_zero_set());
+        assert!(!cpu.is_negative_set());
+    }
+
+    #[test]
+    fn test_cpx_ne() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b10011111, 0xAA, 0xE0, 0b00011111, 0x00]);
+        assert!(cpu.is_carry_set());
+        assert!(!cpu.is_zero_set());
+        assert!(cpu.is_negative_set());
+    }
+
+    #[test]
+    fn test_cpx_ne2() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b00011111, 0xAA, 0xE0, 0b10011111, 0x00]);
+        assert!(!cpu.is_carry_set());
+        assert!(!cpu.is_zero_set());
+        assert!(cpu.is_negative_set());
+    }
+
+    /* 
+    TODO when tay is ready
+    fn test_cpy_eq() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b10011111, 0xA8, 0xC0, 0b10011111, 0x00]);
+        assert!(cpu.is_carry_set());
+        assert!(cpu.is_zero_set());
+        assert!(!cpu.is_negative_set());
+    }
+
+    #[test]
+    fn test_cpy_ne() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b10011111, 0xA8, 0xC0, 0b00011111, 0x00]);
+        assert!(cpu.is_carry_set());
+        assert!(!cpu.is_zero_set());
+        assert!(cpu.is_negative_set());
+    }
+
+    #[test]
+    fn test_cpy_ne2() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b00011111, 0xA8, 0xC0, 0b10011111, 0x00]);
+        assert!(!cpu.is_carry_set());
+        assert!(!cpu.is_zero_set());
+        assert!(cpu.is_negative_set());
+    }
+    */
+
+    #[test]
+    fn test_dec() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0x02, 0x85, 0x01, 0xC6, 0x01, 0x00]);
+        //                             LDA         STA         DEC         
+        assert_eq!(cpu.mem_read(0x01), 1);
+    }
+
+    #[test]
+    fn test_dex() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0x02, 0xAA, 0xCA, 0x00]);
+        //                             LDA         TAX   DEX         
+        assert_eq!(cpu.register_x, 1);
+    }
+
+    #[test]
+    fn test_dey() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0x88, 0x88, 0x00]);
+        //                             DEY   DEY         
+        assert_eq!(cpu.register_y, 254);
+    }
 
 }
