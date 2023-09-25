@@ -54,10 +54,26 @@ impl Cpu6502 {
         self.mem_write(pos + 1, hi);
     }
 
+    fn push(&mut self, data: u8){
+        let addr = 0x0100 | self.stack_pointer as u16;
+        self.mem_write(addr, data);
+        self.stack_pointer -= 1;
+    }
+
+    fn push_u16(&mut self, data: u16){
+        let hi = (data >> 8) as u8;
+        let lo = (data & 0xff) as u8;
+        self.push(hi);
+        self.push(lo);
+    }
+
+    // TODO pop
+
     pub fn reset(&mut self) {
         self.register_acc = 0;
         self.register_x = 0;
         self.register_status = 0;
+        self.stack_pointer = 0xFF; // Memory space [0x0100 .. 0x01FF] is used for stack.
 
         self.program_counter = self.mem_read_u16(0xFFFC);
     }
@@ -104,7 +120,21 @@ impl Cpu6502 {
 
             AddressingMode::ZeroPage => self.mem_read(operand_pc) as u16,
 
-            AddressingMode::Absolute | AddressingMode::Indirect => self.mem_read_u16(operand_pc),
+            AddressingMode::Absolute => self.mem_read_u16(operand_pc),
+
+            AddressingMode::Indirect => {
+                let addr = self.mem_read_u16(operand_pc);
+                self.mem_read_u16(addr)
+
+                /*
+                An original 6502 has does not correctly fetch the target address 
+                if the indirect vector falls on a page boundary 
+                (e.g. $xxFF where xx is any value from $00 to $FF). 
+                In this case fetches the LSB from $xxFF as expected but takes the MSB from $xx00. 
+                This is fixed in some later chips like the 65SC02 so for compatibility
+                always ensure the indirect vector is not at the end of the page. 
+                */
+            }
 
             AddressingMode::ZeroPage_X => {
                 let pos = self.mem_read(operand_pc);
@@ -229,7 +259,6 @@ impl Cpu6502 {
                     self.bit(am);
                 }
 
-
                 // BRK
                 0x00 => {
                     return;
@@ -294,6 +323,9 @@ impl Cpu6502 {
                 }
 
                 // INC
+                0xE6 | 0xF6 | 0xEE | 0xFE => {
+                    self.inc(am);
+                }
 
                 // INX
                 0xE8 => {
@@ -301,10 +333,19 @@ impl Cpu6502 {
                 }
 
                 // INY
+                0xC8 => {
+                    self.iny();
+                }
 
                 // JMP
+                0x4C | 0x6C => {
+                    self.jmp(am);
+                }
 
                 // JSR
+                0x20 => {
+                    self.jsr(am);
+                }
 
                 // LDA
                 0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
@@ -312,18 +353,39 @@ impl Cpu6502 {
                 }
 
                 // LDX
+                0xA2 | 0xA6 | 0xB6 | 0xAE | 0xBE => {
+                    self.ldx(am);
+                }
 
                 // LDY
+                0xA0 | 0xA4 | 0xB4 | 0xAC | 0xBC => {
+                    self.ldy(am);
+                }
 
                 // LSR
+                0x4A | 0x46 | 0x56 | 0x4E | 0x5E => {
+                    self.lsr(am);
+                }
 
                 // NOP
+                0xEA => {
+                    self.nop();
+                }
 
                 // ORA
+                0x09 | 0x05 | 0x15 | 0x0D | 0x1D | 0x19 | 0x01 | 0x11 => {
+                    self.ora(am);
+                }
 
                 // PHA
+                0x48 => {
+                    self.pha();
+                }
 
                 // PHP
+                0x08 => {
+                    self.php();
+                }
 
                 // PLA
 
@@ -376,21 +438,8 @@ impl Cpu6502 {
        Operations
     */
 
-    fn lda(&mut self, mode: &AddressingMode) {
-        let addr = self.get_operand_address(mode);
-        let value = self.mem_read(addr);
-
-        self.register_acc = value;
-        self.update_zero_and_negative_flags(self.register_acc);
-    }
-
     fn tax(&mut self) {
         self.register_x = self.register_acc;
-        self.update_zero_and_negative_flags(self.register_x);
-    }
-
-    fn inx(&mut self) {
-        (self.register_x, _) = self.register_x.overflowing_add(1);
         self.update_zero_and_negative_flags(self.register_x);
     }
 
@@ -551,10 +600,86 @@ impl Cpu6502 {
     }
 
     fn eor(&mut self, mode: &AddressingMode) {
-        let mut value = self.get_operand(mode);
-        
+        let value = self.get_operand(mode);
+        self.register_acc ^= value;
+        self.update_zero_and_negative_flags(self.register_acc);
     }
 
+    fn inc(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let (value, _) = self.mem_read(addr).overflowing_add(1);
+        self.mem_write(addr, value);
+        self.update_zero_and_negative_flags(value);
+    }
+
+    fn inx(&mut self) {
+        (self.register_x, _) = self.register_x.overflowing_add(1);
+        self.update_zero_and_negative_flags(self.register_x);
+    }
+
+    fn iny(&mut self) {
+        (self.register_y, _) = self.register_y.overflowing_add(1);
+        self.update_zero_and_negative_flags(self.register_y);
+    }
+
+    fn jmp(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        self.program_counter = addr;
+    }
+
+    fn jsr(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        self.push_u16(self.program_counter + 3); // TODO remove hardcoded
+        self.program_counter = addr;
+    }
+
+    fn lda(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+
+        self.register_acc = value;
+        self.update_zero_and_negative_flags(value);
+    }
+
+    fn ldx(&mut self, mode: &AddressingMode) {
+        let value = self.get_operand(mode);
+
+        self.register_x = value;
+        self.update_zero_and_negative_flags(value);
+    }
+
+    fn ldy(&mut self, mode: &AddressingMode) {
+        let value = self.get_operand(mode);
+
+        self.register_y = value;
+        self.update_zero_and_negative_flags(value);
+    }
+
+    fn lsr(&mut self, mode: &AddressingMode) {
+        let mut value = self.get_operand(mode);
+        self.update_carry(value & 0b1 == 0b1);
+        value = value >> 1;
+        self.store_operand(mode, value);
+        self.update_zero_and_negative_flags(value);
+    }
+
+    fn nop(&mut self) {
+    }
+
+    fn ora(&mut self, mode: &AddressingMode) {
+        let value = self.get_operand(mode);
+        self.register_acc |= value;
+        self.update_zero_and_negative_flags(self.register_acc);
+    }
+
+    fn pha(&mut self) {
+        self.push(self.register_acc);
+    }
+
+    fn php(&mut self) {
+        self.push(self.register_status);
+    }
+    
 
     /*
         Misc
@@ -635,6 +760,10 @@ impl Cpu6502 {
     +--------- Negative
     */
 }
+
+
+
+
 
 #[cfg(test)]
 mod test {
@@ -950,7 +1079,7 @@ mod test {
     fn test_dec() {
         let mut cpu = Cpu6502::new();
         cpu.load_and_run(vec![0xA9, 0x02, 0x85, 0x01, 0xC6, 0x01, 0x00]);
-        //                             LDA         STA         DEC         
+        //                           | LDA         STA         DEC         
         assert_eq!(cpu.mem_read(0x01), 1);
     }
 
@@ -958,7 +1087,7 @@ mod test {
     fn test_dex() {
         let mut cpu = Cpu6502::new();
         cpu.load_and_run(vec![0xA9, 0x02, 0xAA, 0xCA, 0x00]);
-        //                             LDA         TAX   DEX         
+        //                           | LDA         TAX   DEX         
         assert_eq!(cpu.register_x, 1);
     }
 
@@ -966,8 +1095,141 @@ mod test {
     fn test_dey() {
         let mut cpu = Cpu6502::new();
         cpu.load_and_run(vec![0x88, 0x88, 0x00]);
-        //                             DEY   DEY         
+        //                           | DEY   DEY         
         assert_eq!(cpu.register_y, 254);
     }
+
+    #[test]
+    fn test_eor() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b01010101, 0x49, 0b11111111, 0x00]);
+        //                           | LDA               EOR            
+        assert_eq!(cpu.register_acc, 0b10101010);
+        assert!(!cpu.is_zero_set());
+        assert!(cpu.is_negative_set());
+    }
+
+    #[test]
+    fn test_inc() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0x02, 0x85, 0x01, 0xE6, 0x01, 0x00]);
+        //                           | LDA         STA         INC         
+        assert_eq!(cpu.mem_read(0x01), 3);
+    }
+
+    #[test]
+    fn test_inx() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0x02, 0xAA, 0xE8, 0x00]);
+        //                           | LDA         TAX   INX         
+        assert_eq!(cpu.register_x, 3);
+    }
+
+    #[test]
+    fn test_iny() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xC8, 0xC8, 0x00]);
+        //                           | INY   INY         
+        assert_eq!(cpu.register_y, 2);
+    }
+
+    #[test]
+    fn test_jmp() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0x4C, 0x04, 0x80, 0x00, 0xE8, 0x00]);
+        //                           | JMP               trap  INX
+        assert_eq!(cpu.register_x, 1);
+    }
+
+    #[test]
+    fn test_jmp_indirect() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0x6C, 0x04, 0x80, 0x00, 0x07, 0x80, 0x00, 0xE8, 0x00]);
+        //                           | JMP               trap  addr        trap  INX      
+        assert_eq!(cpu.register_x, 1);
+    }
+
+    #[test]
+    fn test_jsr() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0x20, 0x04, 0x80, 0x00, 0xE8, 0x00]);
+        //                           | JSR               trap  INX
+        assert_eq!(cpu.register_x, 1);
+        assert_eq!(cpu.stack_pointer, 253);
+        assert_eq!(cpu.mem_read_u16(0x01FE), 0x8003);
+    }
+
+    #[test]
+    fn test_ldx() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA2, 0b10000001, 0x00]);
+        //                           | LDX              
+
+        assert_eq!(cpu.register_x, 0b10000001);
+        assert!(!cpu.is_zero_set());
+        assert!(cpu.is_negative_set());
+    }
+
+    #[test]
+    fn test_ldy() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA0, 0, 0x00]);
+        //                           | LDY             
+
+        assert_eq!(cpu.register_x, 0);
+        assert!(cpu.is_zero_set());
+        assert!(!cpu.is_negative_set());
+    }
+
+    #[test]
+    fn test_lsr_acc_no_carry() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b00011110, 0x4A, 0x00]);
+         //                          | LDA               LSR
+        assert_eq!(cpu.register_acc, 0b00001111); 
+        assert!(!cpu.is_carry_set());
+        assert!(!cpu.is_zero_set());
+    }
+
+    #[test]
+    fn test_lsr_acc_carry() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b00011111, 0x4A, 0x00]);
+         //                          | LDA               LSR
+        assert_eq!(cpu.register_acc, 0b00001111);
+        assert!(cpu.is_carry_set());
+        assert!(!cpu.is_zero_set());
+    }
+
+    #[test]
+    fn test_ora() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b01010101, 0x09, 0b10101010, 0x00]);
+        //                           | LDA               ORA            
+        assert_eq!(cpu.register_acc, 0b11111111);
+        assert!(!cpu.is_zero_set());
+        assert!(cpu.is_negative_set());
+    }
+
+    #[test]
+    fn test_pha() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b01010101, 0x48, 0x00]);
+        //                           | LDA               PHA            
+        assert_eq!(cpu.stack_pointer, 254);
+        assert_eq!(cpu.mem_read(0x01FF), 0b01010101);
+    }
+
+    #[test]
+    fn test_php() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b10011111, 0xC9, 0b00011111, 0x08, 0x00]);
+        //                           | LDA               CMP               PHP          
+        assert_eq!(cpu.stack_pointer, 254);
+        assert_eq!(cpu.mem_read(0x01FF), 0b10000001); // carry and negative
+    }
+
+    
+
 
 }
