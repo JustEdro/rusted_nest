@@ -67,6 +67,19 @@ impl Cpu6502 {
         self.push(lo);
     }
 
+    fn pull(&mut self) -> u8 {
+        self.stack_pointer += 1;
+        let addr = 0x0100 | self.stack_pointer as u16;
+        self.mem_read(addr)
+    }
+
+    fn pull_u16(&mut self) -> u16 {
+        let lo = self.pull() as u16;
+        let hi = self.pull() as u16;
+        (hi << 8) | (lo as u16)
+    }
+
+
     // TODO pop
 
     pub fn reset(&mut self) {
@@ -388,40 +401,97 @@ impl Cpu6502 {
                 }
 
                 // PLA
+                0x68 => {
+                    self.pla();
+                }
 
                 // PLP
+                0x28 => {
+                    self.plp();
+                }
 
                 // ROL
+                0x2A | 0x26 | 0x36 | 0x2E | 0x3E => {
+                    self.rol(am);
+                }
 
                 // ROR
+                0x6A | 0x66 | 0x76 | 0x6E | 0x7E => {
+                    self.ror(am);
+                }
 
                 // RTI
+                0x40 => todo!(),
 
                 // RTS
+                0x60 => {
+                    self.rts();
+                }
 
                 // SBC
-
+                0xE9 | 0xE5 | 0xF5 | 0xED | 0xFD | 0xF9 | 0xE1 | 0xF1 => {
+                    self.sbc(am);
+                }
+                
                 // SEC
+                0x38 => {
+                    self.sec();
+                }
+
                 // SED
+                0xF8 => {
+                    self.sed();
+                }
+
                 // SEI
+                0x78 => {
+                    self.sei();
+                }
 
                 // STA
-                0x85 | 0x95 => {
+                0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
                     self.sta(am);
                 }
 
                 // STX
+                0x86 | 0x96 | 0x8E  => {
+                    self.stx(am);
+                }
 
                 // STY
+                0x84 | 0x94 | 0x8C => {
+                    self.sty(am);
+                }
 
                 // TAX
-                0xAA => self.tax(),
+                0xAA => {
+                    self.tax();
+                }
 
                 // TAY
+                0xA8 => {
+                    self.tay();
+                }
+
                 // TSX
+                0xBA => {
+                    self.tsx();
+                }
+
                 // TXA
+                0x8A => {
+                    self.txa();
+                } 
+
                 // TXS
+                0x9A => {
+                    self.txs();
+                }
+
                 // TYA
+                0x98 => {
+                    self.tya();
+                }
 
                 // should not happen
                 _ => todo!(),
@@ -438,28 +508,17 @@ impl Cpu6502 {
        Operations
     */
 
-    fn tax(&mut self) {
-        self.register_x = self.register_acc;
-        self.update_zero_and_negative_flags(self.register_x);
-    }
-
-    fn sta(&mut self, mode: &AddressingMode) {
-        let addr = self.get_operand_address(mode);
-        self.mem_write(addr, self.register_acc);
-    }
-
     fn adc(&mut self, mode: &AddressingMode) {
-        let addr = self.get_operand_address(mode);
-        let value = self.mem_read(addr);
-        let carry;
+        let m = self.register_acc;
+        let n = self.get_operand(mode);
 
-        (self.register_acc, carry) = self.register_acc.overflowing_add(value);
-        if self.is_carry_set() {
-            self.register_acc += 1;
-        }
+        let (nc, mut carry) = if self.is_carry_set() {n.overflowing_add(1)} else {(n, false)};
+       
+        (self.register_acc, carry) = if !carry {m.overflowing_add(nc)} else {(m, true)};
 
         self.update_carry(carry);
         self.update_zero_and_negative_flags(self.register_acc);
+        self.update_overflow( (m^self.register_acc)&(n^self.register_acc)&0x80 == 0x80);
     }
 
     fn and(&mut self, mode: &AddressingMode) {
@@ -679,8 +738,109 @@ impl Cpu6502 {
     fn php(&mut self) {
         self.push(self.register_status);
     }
-    
 
+    fn pla(&mut self) {
+        self.register_acc = self.pull();
+        self.update_zero_and_negative_flags(self.register_acc);
+    }
+
+    fn plp(&mut self) {
+        self.register_status = self.pull();
+    }
+    
+    fn rol(&mut self, mode: &AddressingMode) {
+        let carry = self.is_carry_set();
+        let mut value = self.get_operand(mode);
+        self.update_carry(value & 0b1000_0000 == 0b1000_0000);
+        value = (value << 1) | (if carry {1} else {0});
+        self.store_operand(mode, value);
+        self.update_zero_and_negative_flags(value);
+    }
+
+    fn ror(&mut self, mode: &AddressingMode) {
+        let carry = self.is_carry_set();
+        let mut value = self.get_operand(mode);
+        self.update_carry(value & 0b1 == 0b1);
+        value = (value >> 1) | (if carry {0b1000_0000} else {0});
+        self.store_operand(mode, value);
+        self.update_zero_and_negative_flags(value);
+    }
+
+    fn rts(&mut self) {
+        let addr = self.pull_u16();
+        self.program_counter = addr;
+    }
+
+    fn sbc(&mut self, mode: &AddressingMode) {
+        let m = self.register_acc;
+        let n = !self.get_operand(mode); // invert to substract
+
+        let (nc, mut carry) = if self.is_carry_set() {n.overflowing_add(1)} else {(n, false)};
+       
+        (self.register_acc, carry) = if !carry {m.overflowing_add(nc)} else {(m, true)};
+
+        self.update_carry(carry);
+        self.update_zero_and_negative_flags(self.register_acc);
+        self.update_overflow( (m^self.register_acc)&(n^self.register_acc)&0x80 == 0x80);
+    }
+
+    fn sec(&mut self) {
+        self.update_carry(true);
+    }
+
+    fn sed(&mut self) {
+        self.update_decimal(true);
+    }
+
+    fn sei(&mut self) {
+        self.update_interrupt_disable(true);
+    }
+
+    fn sta(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        self.mem_write(addr, self.register_acc);
+    }
+
+    fn stx(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        self.mem_write(addr, self.register_x);
+    }
+
+    fn sty(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        self.mem_write(addr, self.register_y);
+    }
+
+    fn tax(&mut self) {
+        self.register_x = self.register_acc;
+        self.update_zero_and_negative_flags(self.register_x);
+    }
+
+    fn tay(&mut self) {
+        self.register_y = self.register_acc;
+        self.update_zero_and_negative_flags(self.register_y);
+    }
+
+    fn tsx(&mut self) {
+        self.register_x = self.stack_pointer;
+        self.update_zero_and_negative_flags(self.register_x);
+    }
+
+    fn txa(&mut self) {
+        self.register_acc = self.register_x;
+        self.update_zero_and_negative_flags(self.register_acc);
+    }
+    
+    fn txs(&mut self) {
+        self.stack_pointer = self.register_x;
+    }
+
+    fn tya(&mut self) {
+        self.register_acc = self.register_y;
+        self.update_zero_and_negative_flags(self.register_acc);
+    }
+
+    
     /*
         Misc
     */
@@ -745,6 +905,15 @@ impl Cpu6502 {
     fn is_overflow_set(&self) -> bool {
         self.register_status & 0b0100_0000 == 0b0100_0000
     }
+
+    fn is_decimal_set(&self) -> bool {
+        self.register_status & 0b0000_1000 == 0b0000_1000
+    }
+
+    fn is_interrupt_disable_set(&self) -> bool {
+        self.register_status & 0b0000_0100 == 0b0000_0100
+    }
+
 
     /*
     7  bit  0
@@ -850,6 +1019,26 @@ mod test {
         cpu.run();
         assert_eq!(cpu.register_acc, 0xff);
         assert!(!cpu.is_carry_set());
+    }
+
+    #[test]
+    fn test_adc_lowlevel() {
+        fn eval_adc(cpu: &mut Cpu6502, m: u8, n: u8, res:u8, carry: bool, overflow: bool) {
+            cpu.load_and_run(vec![0xa9, m, 0x69, n, 0x00]);
+            assert!(cpu.is_carry_set() == carry);
+            assert!(cpu.is_overflow_set() == overflow);
+            assert_eq!(cpu.register_acc, res);
+        }
+        
+        let mut cpu = Cpu6502::new();
+        eval_adc(&mut cpu, 80, 16, 96, false, false);
+        eval_adc(&mut cpu, 80, 80, 160, false, true);
+        eval_adc(&mut cpu, 80, 144, 224, false, false);
+        eval_adc(&mut cpu, 80, 208, (288-256) as u8, true, false);
+        eval_adc(&mut cpu, 208, 16, 224, false, false);
+        eval_adc(&mut cpu, 208, 80, (288-256) as u8, true, false);
+        eval_adc(&mut cpu, 208, 144, (352-256) as u8, true, true);
+        eval_adc(&mut cpu, 208, 208, (416-256) as u8, true, false);
     }
 
     #[test]
@@ -1229,7 +1418,181 @@ mod test {
         assert_eq!(cpu.mem_read(0x01FF), 0b10000001); // carry and negative
     }
 
-    
+    #[test]
+    fn test_pla() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 232, 0x48, 0xA9, 1, 0x68, 0x00]);
+        //                           | LDA        PHA   LDA      PLA     
+        assert_eq!(cpu.register_acc, 232);
+        assert!(!cpu.is_zero_set());
+        assert!(cpu.is_negative_set());
+    }
 
+    #[test]
+    fn test_plp() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 232, 0x48, 0xA9, 1, 0x28, 0x00]);
+        //                           | LDA        PHA   LDA      PLP     
+        assert_eq!(cpu.register_status, 232);
+    }
+
+    #[test]
+    fn test_rol() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b1011_1110, 0x2A, 0x00]);
+        //                           | LDA                ROL 
+        assert_eq!(cpu.register_acc, 0b0111_1100);
+        assert!(cpu.is_carry_set());
+    }
+    
+    #[test]
+    fn test_ror() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 0b1011_1111, 0x6A, 0x00]);
+        //                           | LDA                ROR 
+        assert_eq!(cpu.register_acc, 0b0101_1111);
+        assert!(cpu.is_carry_set());
+    }
+
+    #[test]
+    fn test_rts() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0x20, 0x05, 0x80, 0xE8, 0x00, 0xE8, 0x60, 0x00]);
+        //                           | JSR               INX   trap  INX   RTS
+        assert_eq!(cpu.register_x, 2);
+        assert_eq!(cpu.stack_pointer, 255);
+    }
+
+    #[test]
+    fn test_sbc_immediate_carry() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 0x02, 0xE9, 0x01, 0x00]);
+        //                           | LDA         SBC
+        assert_eq!(cpu.register_acc, 0x00); // SBC executed with borrow=!carry
+        assert!(cpu.is_carry_set());
+    }
+
+    #[test]
+    fn test_sbc_immediate_no_carry() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xa9, 56, 0xE9, 21, 0x00]);
+         //                           | LDA      SBC
+        assert_eq!(cpu.register_acc, 35-1); // SBC executed with borrow=!carry
+        assert!(cpu.is_carry_set());
+    }
+    
+    #[test]
+    fn test_sbc_lowlevel() {
+        fn eval_sbc(cpu: &mut Cpu6502, m: u8, n: u8, res:u8, carry: bool, overflow: bool) {
+            cpu.load_and_run(vec![0xA9, 0b1, 0x4A, 0xA9, m, 0xE9, n, 0x00]);
+            //                           | LDA        LSR   LDA      SBC 
+            assert!(cpu.is_carry_set() == carry);
+            assert!(cpu.is_overflow_set() == overflow);
+            assert_eq!(cpu.register_acc, res);
+        }
+        
+        let mut cpu = Cpu6502::new();
+        eval_sbc(&mut cpu, 80, 240, 96, false, false);
+        eval_sbc(&mut cpu, 80, 176, 160, false, true);
+        eval_sbc(&mut cpu, 80, 112, 224, false, false);
+        eval_sbc(&mut cpu, 80, 48, 32, true, false);
+        eval_sbc(&mut cpu, 208, 240, 224, false, false);
+        eval_sbc(&mut cpu, 208, 176, 32, true, false);
+        eval_sbc(&mut cpu, 208, 112, 96, true, true);
+        eval_sbc(&mut cpu, 208, 48, 160, true, false);
+    }
+
+    #[test]
+    fn test_sec() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0x38, 0x00]);
+        assert!(cpu.is_carry_set());
+    }
+
+    #[test]
+    fn test_sed() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xF8, 0x00]);
+        assert!(cpu.is_decimal_set());
+    }
+
+    #[test]
+    fn test_sei() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0x78, 0x00]);
+        assert!(cpu.is_interrupt_disable_set());
+    }
+
+    #[test]
+    fn test_sta() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 123, 0x85, 0x01, 0x00]);
+        //                           | LDA         STA  
+        assert_eq!(cpu.mem_read(0x01), 123);
+    }
+
+    #[test]
+    fn test_stx() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA2, 123, 0x86, 0x01, 0x00]);
+        //                           | LDX         STX  
+        assert_eq!(cpu.mem_read(0x01), 123);
+    }
+
+    #[test]
+    fn test_sty() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA0, 123, 0x84, 0x01, 0x00]);
+        //                           | LDY         STY  
+        assert_eq!(cpu.mem_read(0x01), 123);
+    }
+
+    #[test]
+    fn test_tax() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 123, 0xAA, 0x00]);
+        //                           | LDA         TAX         
+        assert_eq!(cpu.register_x, 123);
+    }
+
+    #[test]
+    fn test_tay() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 123, 0xA8, 0x00]);
+        //                           | LDA        TAY         
+        assert_eq!(cpu.register_y, 123);
+    }
+
+    #[test]
+    fn test_tsx() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0x48, 0xBA, 0x00]);
+        //                           | PHA   TSX         
+        assert_eq!(cpu.register_x, 254);
+    }
+
+    #[test]
+    fn test_txa() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 123, 0xAA, 0xA9, 12, 0x8A, 0x00]);
+        //                           | LDA         TAX  LDA       TXA
+        assert_eq!(cpu.register_acc, 123);
+    }
+
+    #[test]
+    fn test_txs() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 123, 0xAA, 0xA9, 12, 0x9A, 0x00]);
+        //                           | LDA         TAX  LDA       TXS
+        assert_eq!(cpu.stack_pointer, 123);
+    }
+
+    #[test]
+    fn test_tya() {
+        let mut cpu = Cpu6502::new();
+        cpu.load_and_run(vec![0xA9, 123, 0xA8, 0xA9, 12, 0x98, 0x00]);
+        //                           | LDA        TAY   LDA       TYA      
+        assert_eq!(cpu.register_acc, 123);
+    }
 
 }
