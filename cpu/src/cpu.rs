@@ -33,11 +33,15 @@ impl Cpu6502 {
         }
     }
 
-    fn mem_read(&self, addr: u16) -> u8 {
+    pub fn get_program_counter(&self) -> u16 {
+        self.program_counter
+    }
+
+    pub fn mem_read(&self, addr: u16) -> u8 {
         self.memory[addr as usize]
     }
 
-    fn mem_write(&mut self, addr: u16, data: u8) {
+    pub fn mem_write(&mut self, addr: u16, data: u8) {
         self.memory[addr as usize] = data;
     }
 
@@ -94,6 +98,11 @@ impl Cpu6502 {
     pub fn load(&mut self, program: Vec<u8>) {
         self.memory[0x8000..(0x8000 + program.len())].copy_from_slice(&program[..]);
         self.mem_write_u16(0xFFFC, 0x8000);
+    }
+
+    pub fn load_snake(&mut self, program: Vec<u8>) {
+        self.memory[0x0600..(0x0600 + program.len())].copy_from_slice(&program[..]);
+        self.mem_write_u16(0xFFFC, 0x0600);
     }
 
     pub fn load_and_run(&mut self, program: Vec<u8>) {
@@ -196,7 +205,16 @@ impl Cpu6502 {
     }
 
     pub fn run(&mut self) {
+        self.run_with_callback(|_| {});
+    }
+
+    pub fn run_with_callback<F>(&mut self, mut callback: F)
+    where
+        F: FnMut(&mut Cpu6502),
+    {
         loop {
+            callback(self);
+
             let opscode = self.mem_read(self.program_counter) as usize;
             let op = CPU_OPS_CODES[opscode];
 
@@ -274,6 +292,7 @@ impl Cpu6502 {
 
                 // BRK
                 0x00 => {
+                    println!("Stopped by a BRK command");
                     return;
                 }
 
@@ -538,58 +557,58 @@ impl Cpu6502 {
     }
 
     fn bcc(&mut self, mode: &AddressingMode) {
-        let value = self.get_operand(mode);
+        let value = self.get_operand(mode) as i8 + 2;
         if !self.is_carry_set() {
-            self.program_counter += value as u16;
+            self.program_counter = self.program_counter.wrapping_add_signed(value as i16);
         }
     }
 
     fn bcs(&mut self, mode: &AddressingMode) {
-        let value = self.get_operand(mode);
+        let value = self.get_operand(mode) as i8 + 2;
         if self.is_carry_set() {
-            self.program_counter += value as u16;
+            self.program_counter = self.program_counter.wrapping_add_signed(value as i16);
         }
     }
 
     fn beq(&mut self, mode: &AddressingMode) {
-        let value = self.get_operand(mode);
+        let value = self.get_operand(mode) as i8 + 2;
         if self.is_zero_set() {
-            self.program_counter += value as u16;
+            self.program_counter = self.program_counter.wrapping_add_signed(value as i16);
         }
     }
 
     fn bmi(&mut self, mode: &AddressingMode) {
-        let value = self.get_operand(mode);
+        let value = self.get_operand(mode) as i8 + 2;
         if self.is_negative_set() {
-            self.program_counter += value as u16;
+            self.program_counter = self.program_counter.wrapping_add_signed(value as i16);
         }
     }
 
     fn bne(&mut self, mode: &AddressingMode) {
-        let value = self.get_operand(mode);
+        let value = self.get_operand(mode) as i8 + 2;
         if !self.is_zero_set() {
-            self.program_counter += value as u16;
+            self.program_counter = self.program_counter.wrapping_add_signed(value as i16);
         }
     }
 
     fn bpl(&mut self, mode: &AddressingMode) {
-        let value = self.get_operand(mode);
+        let value = self.get_operand(mode) as i8 + 2;
         if !self.is_negative_set() {
-            self.program_counter += value as u16;
+            self.program_counter = self.program_counter.wrapping_add_signed(value as i16);
         }
     }
 
     fn bvc(&mut self, mode: &AddressingMode) {
-        let value = self.get_operand(mode);
+        let value = self.get_operand(mode) as i8 + 2;
         if !self.is_overflow_set() {
-            self.program_counter += value as u16;
+            self.program_counter = self.program_counter.wrapping_add_signed(value as i16);
         }
     }
 
     fn bvs(&mut self, mode: &AddressingMode) {
-        let value = self.get_operand(mode);
+        let value = self.get_operand(mode) as i8 + 2;
         if self.is_overflow_set() {
-            self.program_counter += value as u16;
+            self.program_counter = self.program_counter.wrapping_add_signed(value as i16);
         }
     }
 
@@ -1070,42 +1089,43 @@ mod test {
     #[test]
     fn test_bcc() {
         let mut cpu = Cpu6502::new();
-        cpu.load_and_run(vec![0xa9, 0b00011111, 0x0A, 0x90, 0x03, 0x00, 0xE8, 0x00]);
+        cpu.load_and_run(vec![0xa9, 0b00011111, 0x0A, 0x90, 0x01, 0x00, 0xE8, 0x00]);
+        //                           | LDA               ASL   BCC               INX
         assert_eq!(cpu.register_x, 1)
     }
 
     #[test]
     fn test_bcs() {
         let mut cpu = Cpu6502::new();
-        cpu.load_and_run(vec![0xa9, 0b10011111, 0x0A, 0xB0, 0x03, 0x00, 0xE8, 0x00]);
+        cpu.load_and_run(vec![0xa9, 0b10011111, 0x0A, 0xB0, 0x01, 0x00, 0xE8, 0x00]);
         assert_eq!(cpu.register_x, 1)
     }
 
     #[test]
     fn test_beq() {
         let mut cpu = Cpu6502::new();
-        cpu.load_and_run(vec![0xa9, 0, 0x0A, 0xF0, 0x03, 0x00, 0xE8, 0x00]);
+        cpu.load_and_run(vec![0xa9, 0, 0x0A, 0xF0, 0x01, 0x00, 0xE8, 0x00]);
         assert_eq!(cpu.register_x, 1)
     }
 
     #[test]
     fn test_bmi() {
         let mut cpu = Cpu6502::new();
-        cpu.load_and_run(vec![0xa9, 0b0100_0000, 0x0A, 0x30, 0x03, 0x00, 0xE8, 0x00]);
+        cpu.load_and_run(vec![0xa9, 0b0100_0000, 0x0A, 0x30, 0x01, 0x00, 0xE8, 0x00]);
         assert_eq!(cpu.register_x, 1)
     }
 
     #[test]
     fn test_bne() {
         let mut cpu = Cpu6502::new();
-        cpu.load_and_run(vec![0xa9, 1, 0x0A, 0xD0, 0x03, 0x00, 0xE8, 0x00]);
+        cpu.load_and_run(vec![0xa9, 1, 0x0A, 0xD0, 0x01, 0x00, 0xE8, 0x00]);
         assert_eq!(cpu.register_x, 1)
     }
 
     #[test]
     fn test_bpl() {
         let mut cpu = Cpu6502::new();
-        cpu.load_and_run(vec![0xa9, 0b0010_0000, 0x0A, 0x10, 0x03, 0x00, 0xE8, 0x00]);
+        cpu.load_and_run(vec![0xa9, 0b0010_0000, 0x0A, 0x10, 0x01, 0x00, 0xE8, 0x00]);
         assert_eq!(cpu.register_x, 1)
     }
 
