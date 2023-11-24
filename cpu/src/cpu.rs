@@ -1,5 +1,7 @@
 use super::opcodes::{AddressingMode, CPU_OPS_CODES};
-
+use super::bus::Bus;
+use super::bus::Mem;
+use super::rom::Rom;
 /*
 Accessing only registers	2
 Accessing the first 255 bytes of RAM	3
@@ -17,8 +19,26 @@ pub struct Cpu6502 {
     register_x: u8,       // Index Register X (X)
     register_y: u8,       // Index Register Y (Y)
     register_status: u8,  // Processor status (P)
-    memory: [u8; 0xFFFF],
+    bus: Bus
 }
+
+impl Mem for Cpu6502 {
+    fn mem_read(&self, addr: u16) -> u8 {
+        self.bus.mem_read(addr)
+    }
+ 
+    fn mem_write(&mut self, addr: u16, data: u8) {
+        self.bus.mem_write(addr, data)
+    }
+
+    fn mem_read_u16(&self, pos: u16) -> u16 {
+        self.bus.mem_read_u16(pos)
+    }
+  
+    fn mem_write_u16(&mut self, pos: u16, data: u16) {
+        self.bus.mem_write_u16(pos, data)
+    }
+ }
 
 impl Cpu6502 {
     pub fn new() -> Self {
@@ -29,33 +49,12 @@ impl Cpu6502 {
             register_x: 0,
             register_y: 0,
             register_status: 0,
-            memory: [0; 0xFFFF],
+            bus: Bus::new(Rom::empty().unwrap()),
         }
     }
 
     pub fn get_program_counter(&self) -> u16 {
         self.program_counter
-    }
-
-    pub fn mem_read(&self, addr: u16) -> u8 {
-        self.memory[addr as usize]
-    }
-
-    pub fn mem_write(&mut self, addr: u16, data: u8) {
-        self.memory[addr as usize] = data;
-    }
-
-    fn mem_read_u16(&self, pos: u16) -> u16 {
-        let lo = self.mem_read(pos) as u16;
-        let hi = self.mem_read(pos + 1) as u16;
-        (hi << 8) | (lo as u16)
-    }
-
-    fn mem_write_u16(&mut self, pos: u16, data: u16) {
-        let hi = (data >> 8) as u8;
-        let lo = (data & 0xff) as u8;
-        self.mem_write(pos, lo);
-        self.mem_write(pos + 1, hi);
     }
 
     fn push(&mut self, data: u8){
@@ -92,17 +91,13 @@ impl Cpu6502 {
         self.register_status = 0;
         self.stack_pointer = 0xFF; // Memory space [0x0100 .. 0x01FF] is used for stack.
 
-        self.program_counter = self.mem_read_u16(0xFFFC);
+        self.program_counter = self.mem_read_u16(0xFFFC); // starter poiter in ROM
     }
 
     pub fn load(&mut self, program: Vec<u8>) {
-        self.memory[0x8000..(0x8000 + program.len())].copy_from_slice(&program[..]);
-        self.mem_write_u16(0xFFFC, 0x8000);
-    }
-
-    pub fn load_snake(&mut self, program: Vec<u8>) {
-        self.memory[0x0600..(0x0600 + program.len())].copy_from_slice(&program[..]);
-        self.mem_write_u16(0xFFFC, 0x0600);
+        self.bus = Bus::new(Rom::test(&program).unwrap());
+        //self.memory[0x8000..(0x8000 + program.len())].copy_from_slice(&program[..]);
+        //self.mem_write_u16(0xFFFC, 0x8000);
     }
 
     pub fn load_and_run(&mut self, program: Vec<u8>) {
@@ -1006,9 +1001,11 @@ mod test {
     #[test]
     fn test_lda_from_memory() {
         let mut cpu = Cpu6502::new();
+        
+        cpu.load(vec![0xa5, 0x10, 0x00]);
+        cpu.reset();
         cpu.mem_write(0x10, 0x55);
-
-        cpu.load_and_run(vec![0xa5, 0x10, 0x00]);
+        cpu.run();
 
         assert_eq!(cpu.register_acc, 0x55);
     }

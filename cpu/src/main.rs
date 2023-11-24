@@ -1,10 +1,11 @@
 pub mod cpu;
-pub mod memory_bus;
 pub mod opcodes;
-
+pub mod bus;
+pub mod rom;
 //use crate::opcodes::CPU_OPS_CODES;
 
 use self::cpu::Cpu6502;
+use self::bus::Mem;
 
 use rand::Rng;
 use rand::rngs::ThreadRng;
@@ -57,9 +58,11 @@ fn main() {
         0x60, 0xa2, 0x00, 0xea, 0xea, 0xca, 0xd0, 0xfb, 0x60,
     ];
 
+    //println!("{}", game_code.len());
+
     //load the game
     let mut cpu = Cpu6502::new();
-    cpu.load_snake(game_code);
+    cpu.load(game_code);
     cpu.reset();
 
     // run the game cycle
